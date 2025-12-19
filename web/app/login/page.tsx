@@ -1,10 +1,36 @@
+'use client';
 
 import Link from 'next/link';
 import { Mail, Lock, ArrowRight } from 'lucide-react';
 import Button from '@/components/Button';
 import Logo from '@/components/Logo';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useStore } from '@/store';
 
 export default function LoginPage() {
+    const router = useRouter();
+    const { login } = useStore();
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+
+        // Simulação de login - Em produção isso viria de uma API
+        console.log('Login attempt:', { email });
+
+        // Login mockado
+        login({
+            id: '1',
+            name: 'Paciente Teste',
+            email: email
+        }, 'mock-token-123456');
+
+        alert('Login realizado com sucesso! (Modo Simulação)');
+        router.push('/');
+    };
+
     return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-cyan-50 to-teal-50 px-4">
             <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden">
@@ -17,7 +43,7 @@ export default function LoginPage() {
                         <p className="text-gray-600">Acesse sua conta para gerenciar sua saúde</p>
                     </div>
 
-                    <form className="space-y-6">
+                    <form className="space-y-6" onSubmit={handleSubmit}>
                         <div>
                             <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
                                 Email
@@ -32,6 +58,8 @@ export default function LoginPage() {
                                     type="email"
                                     autoComplete="email"
                                     required
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
                                     className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-cyan-500 focus:border-cyan-500 transition"
                                     placeholder="seu@email.com"
                                 />
@@ -57,13 +85,15 @@ export default function LoginPage() {
                                     type="password"
                                     autoComplete="current-password"
                                     required
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
                                     className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-cyan-500 focus:border-cyan-500 transition"
                                     placeholder="••••••••"
                                 />
                             </div>
                         </div>
 
-                        <Button className="w-full py-3 text-lg group">
+                        <Button type="submit" className="w-full py-3 text-lg group">
                             Entrar
                             <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
                         </Button>
