@@ -34,89 +34,100 @@ import prisma from '../config/database.js';
  *         description: Resultado criado com sucesso
  */
 export const createResultado = async (req, res) => {
-    try {
-        const { exameId, pacienteId, medicoId, detalhes, arquivoUrl } = req.body;
-        const userPerfil = req.userPerfil;
+  try {
+    const { exameId, pacienteId, medicoId, detalhes, arquivoUrl } = req.body;
+    const userPerfil = req.userPerfil;
+    const userId = req.userId;
 
-        // Validação básica
-        if (!exameId || !pacienteId || !medicoId) {
-            return res.status(400).json({
-                error: {
-                    code: 'VALIDATION_ERROR',
-                    message: 'Exame, paciente e médico são obrigatórios'
-                }
-            });
+    // Validação básica
+    if (!exameId || !pacienteId || !medicoId) {
+      return res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Exame, paciente e médico são obrigatórios'
         }
-
-        // Apenas médicos e admins podem criar resultados
-        if (!['MEDICO', 'ADMIN'].includes(userPerfil)) {
-            return res.status(403).json({
-                error: {
-                    code: 'AUTH_FORBIDDEN',
-                    message: 'Apenas médicos e administradores podem criar resultados'
-                }
-            });
-        }
-
-        // Verifica se o exame existe
-        const exame = await prisma.exame.findUnique({
-            where: { id: exameId }
-        });
-
-        if (!exame) {
-            return res.status(404).json({
-                error: {
-                    code: 'RESOURCE_NOT_FOUND',
-                    message: 'Exame não encontrado'
-                }
-            });
-        }
-
-        // Cria o resultado
-        const resultado = await prisma.resultadoExame.create({
-            data: {
-                exameId,
-                pacienteId,
-                medicoId,
-                detalhes,
-                arquivoUrl
-            },
-            include: {
-                exame: {
-                    select: {
-                        id: true,
-                        nome: true
-                    }
-                },
-                paciente: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                },
-                medico: {
-                    select: {
-                        id: true,
-                        nome: true
-                    }
-                }
-            }
-        });
-
-        return res.status(201).json({
-            message: 'Resultado criado com sucesso',
-            resultado
-        });
-    } catch (error) {
-        console.error('Erro ao criar resultado:', error);
-        return res.status(500).json({
-            error: {
-                code: 'INTERNAL_SERVER_ERROR',
-                message: 'Erro ao criar resultado'
-            }
-        });
+      });
     }
+
+    // Apenas médicos e admins podem criar resultados
+    if (!['MEDICO', 'ADMIN'].includes(userPerfil)) {
+      return res.status(403).json({
+        error: {
+          code: 'AUTH_FORBIDDEN',
+          message: 'Apenas médicos e administradores podem criar resultados'
+        }
+      });
+    }
+
+    // Médico só pode criar resultado em seu próprio nome
+    if (userPerfil === 'MEDICO' && medicoId !== userId) {
+      return res.status(403).json({
+        error: {
+          code: 'AUTH_FORBIDDEN',
+          message: 'O médico só pode criar resultados vinculados a si mesmo'
+        }
+      });
+    }
+
+    // Verifica se o exame existe
+    const exame = await prisma.exame.findUnique({
+      where: { id: exameId }
+    });
+
+    if (!exame) {
+      return res.status(404).json({
+        error: {
+          code: 'RESOURCE_NOT_FOUND',
+          message: 'Exame não encontrado'
+        }
+      });
+    }
+
+    // Cria o resultado
+    const resultado = await prisma.resultadoExame.create({
+      data: {
+        exameId,
+        pacienteId,
+        medicoId,
+        detalhes,
+        arquivoUrl
+      },
+      include: {
+        exame: {
+          select: {
+            id: true,
+            nome: true
+          }
+        },
+        paciente: {
+          select: {
+            id: true,
+            nome: true,
+            email: true
+          }
+        },
+        medico: {
+          select: {
+            id: true,
+            nome: true
+          }
+        }
+      }
+    });
+
+    return res.status(201).json({
+      message: 'Resultado criado com sucesso',
+      resultado
+    });
+  } catch (error) {
+    console.error('Erro ao criar resultado:', error);
+    return res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Erro ao criar resultado'
+      }
+    });
+  }
 };
 
 /**
@@ -132,60 +143,60 @@ export const createResultado = async (req, res) => {
  *         description: Lista de resultados
  */
 export const listResultados = async (req, res) => {
-    try {
-        const userPerfil = req.userPerfil;
-        const userId = req.userId;
+  try {
+    const userPerfil = req.userPerfil;
+    const userId = req.userId;
 
-        let whereClause = {};
+    let whereClause = {};
 
-        // Filtro por perfil
-        if (userPerfil === 'PACIENTE') {
-            whereClause.pacienteId = userId;
-        } else if (userPerfil === 'MEDICO') {
-            whereClause.medicoId = userId;
-        }
-        // Admin vê todos
-
-        const resultados = await prisma.resultadoExame.findMany({
-            where: whereClause,
-            include: {
-                exame: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        dia: true,
-                        hora: true
-                    }
-                },
-                paciente: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                },
-                medico: {
-                    select: {
-                        id: true,
-                        nome: true
-                    }
-                }
-            },
-            orderBy: {
-                publicadoEm: 'desc'
-            }
-        });
-
-        return res.json({ resultados });
-    } catch (error) {
-        console.error('Erro ao listar resultados:', error);
-        return res.status(500).json({
-            error: {
-                code: 'INTERNAL_SERVER_ERROR',
-                message: 'Erro ao listar resultados'
-            }
-        });
+    // Filtro por perfil
+    if (userPerfil === 'PACIENTE') {
+      whereClause.pacienteId = userId;
+    } else if (userPerfil === 'MEDICO') {
+      whereClause.medicoId = userId;
     }
+    // ADMIN vê todos
+
+    const resultados = await prisma.resultadoExame.findMany({
+      where: whereClause,
+      include: {
+        exame: {
+          select: {
+            id: true,
+            nome: true,
+            dia: true,
+            hora: true
+          }
+        },
+        paciente: {
+          select: {
+            id: true,
+            nome: true,
+            email: true
+          }
+        },
+        medico: {
+          select: {
+            id: true,
+            nome: true
+          }
+        }
+      },
+      orderBy: {
+        publicadoEm: 'desc'
+      }
+    });
+
+    return res.json({ resultados });
+  } catch (error) {
+    console.error('Erro ao listar resultados:', error);
+    return res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Erro ao listar resultados'
+      }
+    });
+  }
 };
 
 /**
@@ -207,74 +218,74 @@ export const listResultados = async (req, res) => {
  *         description: Resultado encontrado
  */
 export const getResultado = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userPerfil = req.userPerfil;
-        const userId = req.userId;
+  try {
+    const { id } = req.params;
+    const userPerfil = req.userPerfil;
+    const userId = req.userId;
 
-        const resultado = await prisma.resultadoExame.findUnique({
-            where: { id },
-            include: {
-                exame: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        dia: true,
-                        hora: true
-                    }
-                },
-                paciente: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                },
-                medico: {
-                    select: {
-                        id: true,
-                        nome: true
-                    }
-                }
-            }
-        });
-
-        if (!resultado) {
-            return res.status(404).json({
-                error: {
-                    code: 'RESOURCE_NOT_FOUND',
-                    message: 'Resultado não encontrado'
-                }
-            });
+    const resultado = await prisma.resultadoExame.findUnique({
+      where: { id },
+      include: {
+        exame: {
+          select: {
+            id: true,
+            nome: true,
+            dia: true,
+            hora: true
+          }
+        },
+        paciente: {
+          select: {
+            id: true,
+            nome: true,
+            email: true
+          }
+        },
+        medico: {
+          select: {
+            id: true,
+            nome: true
+          }
         }
+      }
+    });
 
-        // Verifica permissões
-        if (userPerfil === 'PACIENTE' && resultado.pacienteId !== userId) {
-            return res.status(403).json({
-                error: {
-                    code: 'AUTH_FORBIDDEN',
-                    message: 'Você não tem permissão para acessar este resultado'
-                }
-            });
+    if (!resultado) {
+      return res.status(404).json({
+        error: {
+          code: 'RESOURCE_NOT_FOUND',
+          message: 'Resultado não encontrado'
         }
-
-        if (userPerfil === 'MEDICO' && resultado.medicoId !== userId) {
-            return res.status(403).json({
-                error: {
-                    code: 'AUTH_FORBIDDEN',
-                    message: 'Você não tem permissão para acessar este resultado'
-                }
-            });
-        }
-
-        return res.json({ resultado });
-    } catch (error) {
-        console.error('Erro ao buscar resultado:', error);
-        return res.status(500).json({
-            error: {
-                code: 'INTERNAL_SERVER_ERROR',
-                message: 'Erro ao buscar resultado'
-            }
-        });
+      });
     }
+
+    // Controle de acesso
+    if (userPerfil === 'PACIENTE' && resultado.pacienteId !== userId) {
+      return res.status(403).json({
+        error: {
+          code: 'AUTH_FORBIDDEN',
+          message: 'Você não tem permissão para acessar este resultado'
+        }
+      });
+    }
+
+    if (userPerfil === 'MEDICO' && resultado.medicoId !== userId) {
+      return res.status(403).json({
+        error: {
+          code: 'AUTH_FORBIDDEN',
+          message: 'Você não tem permissão para acessar este resultado'
+        }
+      });
+    }
+
+    return res.json({ resultado });
+  } catch (error) {
+    console.error('Erro ao buscar resultado:', error);
+    return res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Erro ao buscar resultado'
+      }
+    });
+  }
 };
