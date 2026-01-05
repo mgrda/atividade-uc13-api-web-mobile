@@ -45,8 +45,12 @@ export const authMiddleware = (req, res, next) => {
                 });
             }
 
-            req.userId = decoded.id;
-            req.userPerfil = decoded.perfil;
+            // MUDANÇA AQUI: Criando o objeto 'user' para as controllers usarem
+            req.user = {
+                id: decoded.id,
+                perfil: decoded.perfil
+            };
+
             return next();
         });
     } catch (error) {
@@ -61,7 +65,8 @@ export const authMiddleware = (req, res, next) => {
 
 export const requireRole = (roles) => {
     return (req, res, next) => {
-        if (!req.userPerfil) {
+        // AJUSTE: Verificando dentro do novo objeto req.user
+        if (!req.user || !req.user.perfil) {
             return res.status(401).json({
                 error: {
                     code: 'AUTH_FORBIDDEN',
@@ -70,7 +75,7 @@ export const requireRole = (roles) => {
             });
         }
 
-        if (!roles.includes(req.userPerfil)) {
+        if (!roles.includes(req.user.perfil)) {
             return res.status(403).json({
                 error: {
                     code: 'AUTH_FORBIDDEN',

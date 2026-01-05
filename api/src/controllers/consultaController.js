@@ -13,145 +13,90 @@ import prisma from '../config/database.js';
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required:
- *               - pacienteId
- *               - medicoId
- *               - dia
- *               - hora
- *             properties:
- *               pacienteId:
- *                 type: string
- *               medicoId:
- *                 type: string
- *               dia:
- *                 type: string
- *                 format: date
- *               hora:
- *                 type: string
- *               detalhes:
- *                 type: string
+ *             $ref: '#/components/schemas/Consulta'
  *     responses:
  *       201:
  *         description: Consulta criada com sucesso
+ *       400:
+ *         description: Erro de validação
+ *       403:
+ *         description: Acesso negado
+ *       409:
+ *         description: Horário indisponível
  */
 export const createConsulta = async (req, res) => {
-    try {
-        const { pacienteId, medicoId, dia, hora, detalhes } = req.body;
-        const userPerfil = req.userPerfil;
-        const userId = req.userId;
+  try {
+    const { pacienteId, medicoId, dia, hora, detalhes } = req.body;
+    const { perfil: userPerfil, id: userId } = req.user;
 
-        // Validação básica
-        if (!pacienteId || !medicoId || !dia || !hora) {
-            return res.status(400).json({
-                error: {
-                    code: 'VALIDATION_ERROR',
-                    message: 'Paciente, médico, dia e hora são obrigatórios'
-                }
-            });
-        }
-
-        // Verifica permissões
-        if (userPerfil === 'PACIENTE' && pacienteId !== userId) {
-            return res.status(403).json({
-                error: {
-                    code: 'AUTH_FORBIDDEN',
-                    message: 'Você só pode agendar consultas para si mesmo'
-                }
-            });
-        }
-
-        // Verifica se o médico existe e é médico
-        const medico = await prisma.usuario.findUnique({
-            where: { id: medicoId }
-        });
-
-        if (!medico || medico.perfil !== 'MEDICO') {
-            return res.status(400).json({
-                error: {
-                    code: 'VALIDATION_ERROR',
-                    message: 'Médico inválido'
-                }
-            });
-        }
-
-        // Verifica se o paciente existe
-        const paciente = await prisma.usuario.findUnique({
-            where: { id: pacienteId }
-        });
-
-        if (!paciente) {
-            return res.status(400).json({
-                error: {
-                    code: 'VALIDATION_ERROR',
-                    message: 'Paciente não encontrado'
-                }
-            });
-        }
-
-        // Cria dataHora combinando dia e hora
-        const [horas, minutos] = hora.split(':');
-        const dataHora = new Date(dia);
-        dataHora.setHours(parseInt(horas), parseInt(minutos), 0, 0);
-
-        // Verifica se já existe consulta no mesmo horário para o médico
-        const consultaExistente = await prisma.consulta.findFirst({
-            where: {
-                medicoId,
-                dataHora
-            }
-        });
-
-        if (consultaExistente) {
-            return res.status(409).json({
-                error: {
-                    code: 'SLOT_UNAVAILABLE',
-                    message: 'Horário indisponível para este médico'
-                }
-            });
-        }
-
-        // Cria a consulta
-        const consulta = await prisma.consulta.create({
-            data: {
-                pacienteId,
-                medicoId,
-                dia: new Date(dia),
-                hora,
-                dataHora,
-                detalhes
-            },
-            include: {
-                paciente: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                },
-                medico: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                }
-            }
-        });
-
-        return res.status(201).json({
-            message: 'Consulta agendada com sucesso',
-            consulta
-        });
-    } catch (error) {
-        console.error('Erro ao criar consulta:', error);
-        return res.status(500).json({
-            error: {
-                code: 'INTERNAL_SERVER_ERROR',
-                message: 'Erro ao criar consulta'
-            }
-        });
+    if (!pacienteId || !medicoId || !dia || !hora) {
+      return res.status(400).json({
+        error: { code: 'VALIDATION_ERROR', message: 'Campos obrigatórios ausentes' }
+      });
     }
+
+    if (userPerfil === 'PACIENTE' && pacienteId !== userId) {
+      return res.status(403).json({
+        error: { code: 'AUTH_FORBIDDEN', message: 'Você só pode agendar para si' }
+      });
+    }
+
+    const [paciente, medico] = await Promise.all([
+      prisma.usuario.findUnique({ where: { id: pacienteId } }),
+      prisma.usuario.findUnique({ where: { id: medicoId } })
+    ]);
+
+    if (!paciente || !paciente.ativo) {
+      return res.status(400).json({
+        error: { code: 'VALIDATION_ERROR', message: 'Paciente inválido ou inativo' }
+      });
+    }
+
+    if (!medico || medico.perfil !== 'MEDICO' || !medico.ativo) {
+      return res.status(400).json({
+        error: { code: 'VALIDATION_ERROR', message: 'Médico inválido ou inativo' }
+      });
+    }
+
+    const [h, m] = hora.split(':');
+    const dataHora = new Date(dia);
+    dataHora.setHours(Number(h), Number(m), 0, 0);
+
+    const conflito = await prisma.consulta.findFirst({
+      where: { medicoId, dataHora }
+    });
+
+    if (conflito) {
+      return res.status(409).json({
+        error: { code: 'SLOT_UNAVAILABLE', message: 'Horário indisponível' }
+      });
+    }
+
+    const consulta = await prisma.consulta.create({
+      data: {
+        pacienteId,
+        medicoId,
+        dia: new Date(dia),
+        hora,
+        dataHora,
+        detalhes
+      },
+      include: {
+        paciente: { select: { id: true, nome: true, email: true } },
+        medico: { select: { id: true, nome: true, email: true } }
+      }
+    });
+
+    return res.status(201).json({
+      message: 'Consulta agendada com sucesso',
+      consulta
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'Erro ao criar consulta' }
+    });
+  }
 };
 
 /**
@@ -167,60 +112,36 @@ export const createConsulta = async (req, res) => {
  *         description: Lista de consultas
  */
 export const listConsultas = async (req, res) => {
-    try {
-        const userPerfil = req.userPerfil;
-        const userId = req.userId;
+  try {
+    const { perfil, id } = req.user;
+    const where = {};
 
-        let whereClause = {};
+    if (perfil === 'PACIENTE') where.pacienteId = id;
+    if (perfil === 'MEDICO') where.medicoId = id;
 
-        // Filtro por perfil
-        if (userPerfil === 'PACIENTE') {
-            whereClause.pacienteId = userId;
-        } else if (userPerfil === 'MEDICO') {
-            whereClause.medicoId = userId;
-        }
-        // Admin e Atendente veem todas
+    const consultas = await prisma.consulta.findMany({
+      where,
+      include: {
+        paciente: { select: { id: true, nome: true, email: true } },
+        medico: { select: { id: true, nome: true, email: true } }
+      },
+      orderBy: { dataHora: 'asc' }
+    });
 
-        const consultas = await prisma.consulta.findMany({
-            where: whereClause,
-            include: {
-                paciente: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                },
-                medico: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                }
-            },
-            orderBy: {
-                dataHora: 'asc'
-            }
-        });
-
-        return res.json({ consultas });
-    } catch (error) {
-        console.error('Erro ao listar consultas:', error);
-        return res.status(500).json({
-            error: {
-                code: 'INTERNAL_SERVER_ERROR',
-                message: 'Erro ao listar consultas'
-            }
-        });
-    }
+    return res.json({ consultas });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'Erro ao listar consultas' }
+    });
+  }
 };
 
 /**
  * @swagger
  * /consultas/{id}:
  *   get:
- *     summary: Busca uma consulta por ID
+ *     summary: Buscar uma consulta por ID
  *     tags: [Consultas]
  *     security:
  *       - bearerAuth: []
@@ -233,71 +154,44 @@ export const listConsultas = async (req, res) => {
  *     responses:
  *       200:
  *         description: Consulta encontrada
+ *       404:
+ *         description: Consulta não encontrada
  */
 export const getConsulta = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userPerfil = req.userPerfil;
-        const userId = req.userId;
+  try {
+    const { id } = req.params;
+    const { perfil, id: userId } = req.user;
 
-        const consulta = await prisma.consulta.findUnique({
-            where: { id },
-            include: {
-                paciente: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                },
-                medico: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                }
-            }
-        });
+    const consulta = await prisma.consulta.findUnique({
+      where: { id },
+      include: {
+        paciente: { select: { id: true, nome: true, email: true } },
+        medico: { select: { id: true, nome: true, email: true } }
+      }
+    });
 
-        if (!consulta) {
-            return res.status(404).json({
-                error: {
-                    code: 'RESOURCE_NOT_FOUND',
-                    message: 'Consulta não encontrada'
-                }
-            });
-        }
-
-        // Verifica permissões
-        if (userPerfil === 'PACIENTE' && consulta.pacienteId !== userId) {
-            return res.status(403).json({
-                error: {
-                    code: 'AUTH_FORBIDDEN',
-                    message: 'Você não tem permissão para acessar esta consulta'
-                }
-            });
-        }
-
-        if (userPerfil === 'MEDICO' && consulta.medicoId !== userId) {
-            return res.status(403).json({
-                error: {
-                    code: 'AUTH_FORBIDDEN',
-                    message: 'Você não tem permissão para acessar esta consulta'
-                }
-            });
-        }
-
-        return res.json({ consulta });
-    } catch (error) {
-        console.error('Erro ao buscar consulta:', error);
-        return res.status(500).json({
-            error: {
-                code: 'INTERNAL_SERVER_ERROR',
-                message: 'Erro ao buscar consulta'
-            }
-        });
+    if (!consulta) {
+      return res.status(404).json({
+        error: { code: 'RESOURCE_NOT_FOUND', message: 'Consulta não encontrada' }
+      });
     }
+
+    if (
+      (perfil === 'PACIENTE' && consulta.pacienteId !== userId) ||
+      (perfil === 'MEDICO' && consulta.medicoId !== userId)
+    ) {
+      return res.status(403).json({
+        error: { code: 'AUTH_FORBIDDEN', message: 'Acesso negado' }
+      });
+    }
+
+    return res.json({ consulta });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'Erro ao buscar consulta' }
+    });
+  }
 };
 
 /**
@@ -315,7 +209,7 @@ export const getConsulta = async (req, res) => {
  *         schema:
  *           type: string
  *     requestBody:
- *       required: true
+ *       required: false
  *       content:
  *         application/json:
  *           schema:
@@ -326,98 +220,63 @@ export const getConsulta = async (req, res) => {
  *                 enum: [AGENDADA, REALIZADA, CANCELADA, NAO_COMPARECEU]
  *               detalhes:
  *                 type: string
- *     responses:
- *       200:
- *         description: Consulta atualizada com sucesso
  */
 export const updateConsulta = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status, detalhes } = req.body;
-        const userPerfil = req.userPerfil;
-        const userId = req.userId;
+  try {
+    const { id } = req.params;
+    const { status, detalhes } = req.body;
+    const { perfil, id: userId } = req.user;
 
-        const consulta = await prisma.consulta.findUnique({
-            where: { id }
-        });
+    const consulta = await prisma.consulta.findUnique({ where: { id } });
 
-        if (!consulta) {
-            return res.status(404).json({
-                error: {
-                    code: 'RESOURCE_NOT_FOUND',
-                    message: 'Consulta não encontrada'
-                }
-            });
-        }
-
-        // Verifica permissões
-        if (userPerfil === 'PACIENTE' && consulta.pacienteId !== userId) {
-            return res.status(403).json({
-                error: {
-                    code: 'AUTH_FORBIDDEN',
-                    message: 'Você não tem permissão para atualizar esta consulta'
-                }
-            });
-        }
-
-        if (userPerfil === 'MEDICO' && consulta.medicoId !== userId) {
-            return res.status(403).json({
-                error: {
-                    code: 'AUTH_FORBIDDEN',
-                    message: 'Você não tem permissão para atualizar esta consulta'
-                }
-            });
-        }
-
-        const dadosAtualizacao = {};
-        if (status) {
-            const statusValidos = ['AGENDADA', 'REALIZADA', 'CANCELADA', 'NAO_COMPARECEU'];
-            if (!statusValidos.includes(status)) {
-                return res.status(400).json({
-                    error: {
-                        code: 'VALIDATION_ERROR',
-                        message: 'Status inválido'
-                    }
-                });
-            }
-            dadosAtualizacao.status = status;
-        }
-        if (detalhes !== undefined) dadosAtualizacao.detalhes = detalhes;
-
-        const consultaAtualizada = await prisma.consulta.update({
-            where: { id },
-            data: dadosAtualizacao,
-            include: {
-                paciente: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                },
-                medico: {
-                    select: {
-                        id: true,
-                        nome: true,
-                        email: true
-                    }
-                }
-            }
-        });
-
-        return res.json({
-            message: 'Consulta atualizada com sucesso',
-            consulta: consultaAtualizada
-        });
-    } catch (error) {
-        console.error('Erro ao atualizar consulta:', error);
-        return res.status(500).json({
-            error: {
-                code: 'INTERNAL_SERVER_ERROR',
-                message: 'Erro ao atualizar consulta'
-            }
-        });
+    if (!consulta) {
+      return res.status(404).json({
+        error: { code: 'RESOURCE_NOT_FOUND', message: 'Consulta não encontrada' }
+      });
     }
+
+    if (
+      (perfil === 'PACIENTE' && consulta.pacienteId !== userId) ||
+      (perfil === 'MEDICO' && consulta.medicoId !== userId)
+    ) {
+      return res.status(403).json({
+        error: { code: 'AUTH_FORBIDDEN', message: 'Acesso negado' }
+      });
+    }
+
+    const data = {};
+
+    if (status) {
+      const validos = ['AGENDADA', 'REALIZADA', 'CANCELADA', 'NAO_COMPARECEU'];
+      if (!validos.includes(status)) {
+        return res.status(400).json({
+          error: { code: 'VALIDATION_ERROR', message: 'Status inválido' }
+        });
+      }
+      data.status = status;
+    }
+
+    if (detalhes !== undefined) data.detalhes = detalhes;
+
+    const consultaAtualizada = await prisma.consulta.update({
+      where: { id },
+      data,
+      include: {
+        paciente: { select: { id: true, nome: true, email: true } },
+        medico: { select: { id: true, nome: true, email: true } }
+      }
+    });
+
+    return res.json({
+      message: 'Consulta atualizada com sucesso',
+      consulta: consultaAtualizada
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'Erro ao atualizar consulta' }
+    });
+  }
 };
 
 /**
@@ -436,54 +295,43 @@ export const updateConsulta = async (req, res) => {
  *           type: string
  *     responses:
  *       200:
- *         description: Consulta cancelada com sucesso
+ *         description: Consulta cancelada
  */
 export const deleteConsulta = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userPerfil = req.userPerfil;
-        const userId = req.userId;
+  try {
+    const { id } = req.params;
+    const { perfil, id: userId } = req.user;
 
-        const consulta = await prisma.consulta.findUnique({
-            where: { id }
-        });
+    const consulta = await prisma.consulta.findUnique({ where: { id } });
 
-        if (!consulta) {
-            return res.status(404).json({
-                error: {
-                    code: 'RESOURCE_NOT_FOUND',
-                    message: 'Consulta não encontrada'
-                }
-            });
-        }
-
-        // Verifica permissões
-        if (userPerfil === 'PACIENTE' && consulta.pacienteId !== userId) {
-            return res.status(403).json({
-                error: {
-                    code: 'AUTH_FORBIDDEN',
-                    message: 'Você não tem permissão para cancelar esta consulta'
-                }
-            });
-        }
-
-        // Atualiza o status para CANCELADA ao invés de deletar
-        const consultaCancelada = await prisma.consulta.update({
-            where: { id },
-            data: { status: 'CANCELADA' }
-        });
-
-        return res.json({
-            message: 'Consulta cancelada com sucesso',
-            consulta: consultaCancelada
-        });
-    } catch (error) {
-        console.error('Erro ao cancelar consulta:', error);
-        return res.status(500).json({
-            error: {
-                code: 'INTERNAL_SERVER_ERROR',
-                message: 'Erro ao cancelar consulta'
-            }
-        });
+    if (!consulta) {
+      return res.status(404).json({
+        error: { code: 'RESOURCE_NOT_FOUND', message: 'Consulta não encontrada' }
+      });
     }
+
+    if (
+      (perfil === 'PACIENTE' && consulta.pacienteId !== userId) ||
+      (perfil === 'MEDICO' && consulta.medicoId !== userId)
+    ) {
+      return res.status(403).json({
+        error: { code: 'AUTH_FORBIDDEN', message: 'Acesso negado' }
+      });
+    }
+
+    const consultaCancelada = await prisma.consulta.update({
+      where: { id },
+      data: { status: 'CANCELADA' }
+    });
+
+    return res.json({
+      message: 'Consulta cancelada com sucesso',
+      consulta: consultaCancelada
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'Erro ao cancelar consulta' }
+    });
+  }
 };
